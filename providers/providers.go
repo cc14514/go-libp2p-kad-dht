@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"math/big"
+	"os"
 	"strings"
 	"time"
 
@@ -44,6 +46,7 @@ type ProviderManager struct {
 type providerSet struct {
 	providers []peer.ID
 	set       map[peer.ID]time.Time
+	ttl       time.Duration // add by liangc : 作为这个 set 的 timeout 参考值，当 ttl > 0 时 now - set.time >= ttl 时即超时
 }
 
 type addProv struct {
@@ -89,7 +92,23 @@ func (pm *ProviderManager) providersForKey(k cid.Cid) ([]peer.ID, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pset.providers, nil
+	// add by liangc : 将已过期的过滤掉，db 的清理留给 gc 去完成
+	var ret []peer.ID
+	if pset.ttl > 0 {
+		ret = make([]peer.ID, 0)
+		for _, p := range pset.providers {
+			t, ok := pset.set[p]
+			stat := "exclude"
+			if ok && time.Since(t) <= pset.ttl {
+				ret = append(ret, p)
+				stat = "setup"
+			}
+			log.Debugf("providersForKey-filter-ttl : ttl=%v , peer=%s , pttl=%d , stat=%s", pset.ttl, p.Pretty(), time.Now().Unix()-t.Unix(), stat)
+		}
+	} else {
+		ret = pset.providers
+	}
+	return ret, nil
 }
 
 func (pm *ProviderManager) getProvSet(k cid.Cid) (*providerSet, error) {
@@ -111,6 +130,17 @@ func (pm *ProviderManager) getProvSet(k cid.Cid) (*providerSet, error) {
 }
 
 func loadProvSet(dstore ds.Datastore, k cid.Cid) (*providerSet, error) {
+	// add by liangc >>>>>>>>>
+	nsv := os.Getenv(k.String())
+	tt := time.Duration(0)
+	if nsv != "" {
+		if _tt, ok := new(big.Int).SetString(nsv, 10); ok {
+			tt = time.Duration(_tt.Int64())
+		}
+	}
+	log.Debugf("loadProvSet-set-ttl : cid=%s , ttl=%d", k.String(), tt)
+	// add by liangc <<<<<<<<<
+
 	res, err := dstore.Query(dsq.Query{Prefix: mkProvKey(k)})
 	if err != nil {
 		return nil, err
@@ -161,7 +191,7 @@ func loadProvSet(dstore ds.Datastore, k cid.Cid) (*providerSet, error) {
 
 		out.setVal(pid, t)
 	}
-
+	out.ttl = tt
 	return out, nil
 }
 
