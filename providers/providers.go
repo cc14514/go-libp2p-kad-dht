@@ -103,7 +103,7 @@ func (pm *ProviderManager) providersForKey(k cid.Cid) ([]peer.ID, error) {
 				ret = append(ret, p)
 				stat = "setup"
 			}
-			log.Debugf("providersForKey-filter-ttl : ttl=%v , peer=%s , pttl=%d , stat=%s", pset.ttl, p.Pretty(), time.Now().Unix()-t.Unix(), stat)
+			log.Infof("providersForKey-filter-ttl : ttl=%v , peer=%s , pttl=%d , stat=%s", pset.ttl, p.Pretty(), time.Now().Unix()-t.Unix(), stat)
 		}
 	} else {
 		ret = pset.providers
