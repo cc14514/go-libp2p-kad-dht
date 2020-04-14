@@ -3,7 +3,10 @@ package dht
 import (
 	"context"
 	"errors"
+	"github.com/ipfs/go-cid"
+	"os"
 	"sync"
+	"time"
 
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
@@ -26,6 +29,7 @@ var ErrNoPeersQueried = errors.New("failed to query any peers")
 var maxQueryConcurrency = AlphaValue
 
 type dhtQuery struct {
+	dialTimeout time.Duration
 	dht         *IpfsDHT
 	key         string    // the key we're querying for
 	qfunc       queryFunc // the function to execute per peer
@@ -43,7 +47,15 @@ type dhtQueryResult struct {
 
 // constructs query
 func (dht *IpfsDHT) newQuery(k string, f queryFunc) *dhtQuery {
+	// add by liangc : global timeout setting
+	var dialTimeout time.Duration
+	if _k, err := cid.Cast([]byte(k)); err == nil {
+		if _expire := os.Getenv(_k.String()); _expire != "" {
+			dialTimeout = 5 * time.Second
+		}
+	}
 	return &dhtQuery{
+		dialTimeout: dialTimeout,
 		key:         k,
 		dht:         dht,
 		qfunc:       f,
@@ -279,8 +291,12 @@ func (r *dhtQueryRunner) queryPeer(proc process.Process, p peer.ID) {
 	}()
 
 	// finally, run the query against this peer
+	if r.query.dialTimeout > 0 {
+		ctx = context.WithValue(ctx, "timeout", r.query.dialTimeout) // 5s
+	} else {
+		ctx = context.WithValue(ctx, "timeout", 10*time.Second)
+	}
 	res, err := r.query.qfunc(ctx, p)
-
 	r.peersQueried.Add(p)
 
 	if err != nil {

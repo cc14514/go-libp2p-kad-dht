@@ -285,7 +285,12 @@ func (ms *messageSender) prep(ctx context.Context) error {
 	if ms.s != nil {
 		return nil
 	}
-
+	// add by liangc : may be not run with this arg, swarm provide a global func to set timeout
+	if to := ctx.Value("timeout"); to != nil {
+		if _to, ok := to.(time.Duration); ok {
+			ctx = network.WithDialPeerTimeout(ctx, _to)
+		}
+	}
 	nstr, err := ms.dht.host.NewStream(ctx, ms.p, ms.dht.protocols...)
 	if err != nil {
 		return err
@@ -395,8 +400,16 @@ func (ms *messageSender) ctxReadMsg(ctx context.Context, mes *pb.Message) error 
 	go func(r ggio.ReadCloser) {
 		errc <- r.ReadMsg(mes)
 	}(ms.r)
-
-	t := time.NewTimer(dhtReadMessageTimeout)
+	var t *time.Timer
+	// add by liangc : check the timeout setting with ctx
+	if to := ctx.Value("timeout"); to != nil {
+		if _to, ok := to.(time.Duration); ok {
+			t = time.NewTimer(_to)
+		}
+	}
+	if t == nil {
+		t = time.NewTimer(dhtReadMessageTimeout)
+	}
 	defer t.Stop()
 
 	select {
