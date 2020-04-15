@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -275,6 +276,23 @@ func (dht *IpfsDHT) putLocal(key string, rec *recpb.Record) error {
 // on the given peer.
 func (dht *IpfsDHT) Update(ctx context.Context, p peer.ID) {
 	logger.Event(ctx, "updatePeer", p)
+	// add by liangc : dht filter , remove plume node in dht
+	// 更新 dht 之前要检查 plume 协议，如果 peer 使用 plume 协议则加入 plume 注册表，并且在在 dht 中清除
+	pros, _ := dht.host.Peerstore().GetProtocols(p)
+
+	//fmt.Println("############################################## IpfsDHT.Update >>>>")
+	//fmt.Println("peer", p.Pretty())
+	//fmt.Println("protocols", pros)
+	//fmt.Println("addrs", dht.host.Peerstore().Addrs(p))
+	//fmt.Println("dht_size", dht.routingTable.Size())
+	//defer fmt.Println("############################################## IpfsDHT.Update <<<<")
+	for _, pro := range pros {
+		if strings.Contains(pro, "/pdx/plume") {
+			dht.routingTable.Remove(p)
+			//fmt.Println("after_remove_dht_size", dht.routingTable.Size())
+			return
+		}
+	}
 	dht.routingTable.Update(p)
 }
 
