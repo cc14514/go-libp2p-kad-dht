@@ -45,9 +45,10 @@ const NumBootstrapQueries = 5
 // IpfsDHT is an implementation of Kademlia with S/Kademlia modifications.
 // It is used to implement the base Routing module.
 type IpfsDHT struct {
-	host      host.Host           // the network services we need
-	self      peer.ID             // Local peer (yourself)
-	peerstore peerstore.Peerstore // Peer Registry
+	enableMetric bool                // add by liangc
+	host         host.Host           // the network services we need
+	self         peer.ID             // Local peer (yourself)
+	peerstore    peerstore.Peerstore // Peer Registry
 
 	datastore ds.Datastore // Local data
 
@@ -85,7 +86,7 @@ func New(ctx context.Context, h host.Host, options ...opts.Option) (*IpfsDHT, er
 	if err := cfg.Apply(append([]opts.Option{opts.Defaults}, options...)...); err != nil {
 		return nil, err
 	}
-	dht := makeDHT(ctx, h, cfg.Datastore, cfg.Protocols)
+	dht := makeDHT(ctx, h, cfg.Datastore, cfg.Protocols, cfg.Metrics)
 
 	// register for network notifs.
 	dht.host.Network().Notify((*netNotifiee)(dht))
@@ -130,7 +131,7 @@ func NewDHTClient(ctx context.Context, h host.Host, dstore ds.Batching) *IpfsDHT
 	return dht
 }
 
-func makeDHT(ctx context.Context, h host.Host, dstore ds.Batching, protocols []protocol.ID) *IpfsDHT {
+func makeDHT(ctx context.Context, h host.Host, dstore ds.Batching, protocols []protocol.ID, enableMetric bool) *IpfsDHT {
 	rt := kb.NewRoutingTable(KValue, kb.ConvertPeerID(h.ID()), time.Minute, h.Peerstore())
 
 	cmgr := h.ConnManager()
@@ -152,9 +153,15 @@ func makeDHT(ctx context.Context, h host.Host, dstore ds.Batching, protocols []p
 		birth:        time.Now(),
 		routingTable: rt,
 		protocols:    protocols,
+		enableMetric: enableMetric, // add by liangc
 	}
 
-	dht.ctx = dht.newContextWithLocalTags(ctx)
+	// add by liangc
+	if enableMetric {
+		dht.ctx = dht.newContextWithLocalTags(ctx)
+	} else {
+		dht.ctx = ctx
+	}
 
 	return dht
 }

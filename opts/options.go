@@ -20,10 +20,10 @@ var (
 
 // Options is a structure containing all the options that can be used when constructing a DHT.
 type Options struct {
-	Datastore ds.Batching
-	Validator record.Validator
-	Client    bool
-	Protocols []protocol.ID
+	Datastore       ds.Batching
+	Validator       record.Validator
+	Client, Metrics bool
+	Protocols       []protocol.ID
 }
 
 // Apply applies the given options to this Option
@@ -47,6 +47,8 @@ var Defaults = func(o *Options) error {
 	}
 	o.Datastore = dssync.MutexWrap(ds.NewMapDatastore())
 	o.Protocols = DefaultProtocols
+	// add by liangc
+	o.Metrics = true
 	return nil
 }
 
@@ -56,6 +58,14 @@ var Defaults = func(o *Options) error {
 func Datastore(ds ds.Batching) Option {
 	return func(o *Options) error {
 		o.Datastore = ds
+		return nil
+	}
+}
+
+// add by liangc
+func Metrics(m bool) Option {
+	return func(o *Options) error {
+		o.Metrics = m
 		return nil
 	}
 }

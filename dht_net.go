@@ -89,7 +89,7 @@ func (dht *IpfsDHT) handleNewMessage(s network.Stream) bool {
 			if err.Error() != "stream reset" {
 				logger.Debugf("error reading message: %#v", err)
 			}
-			stats.RecordWithTags(
+			dht.statsRecordWithTags(
 				ctx,
 				[]tag.Mutator{tag.Upsert(metrics.KeyMessageType, "UNKNOWN")},
 				metrics.ReceivedMessageErrors.M(1),
@@ -101,12 +101,12 @@ func (dht *IpfsDHT) handleNewMessage(s network.Stream) bool {
 		timer.Reset(dhtStreamIdleTimeout)
 
 		startTime := time.Now()
-		ctx, _ = tag.New(
+		ctx, _ = dht.tagNew(
 			ctx,
 			tag.Upsert(metrics.KeyMessageType, req.GetType().String()),
 		)
 
-		stats.Record(
+		dht.statsRecord(
 			ctx,
 			metrics.ReceivedMessages.M(1),
 			metrics.ReceivedBytes.M(int64(req.Size())),
@@ -114,14 +114,14 @@ func (dht *IpfsDHT) handleNewMessage(s network.Stream) bool {
 
 		handler := dht.handlerForMsgType(req.GetType())
 		if handler == nil {
-			stats.Record(ctx, metrics.ReceivedMessageErrors.M(1))
+			dht.statsRecord(ctx, metrics.ReceivedMessageErrors.M(1))
 			logger.Warningf("can't handle received message of type %v", req.GetType())
 			return false
 		}
 
 		resp, err := handler(ctx, mPeer, &req)
 		if err != nil {
-			stats.Record(ctx, metrics.ReceivedMessageErrors.M(1))
+			dht.statsRecord(ctx, metrics.ReceivedMessageErrors.M(1))
 			logger.Debugf("error handling message: %v", err)
 			return false
 		}
@@ -135,25 +135,25 @@ func (dht *IpfsDHT) handleNewMessage(s network.Stream) bool {
 		// send out response msg
 		err = writeMsg(s, resp)
 		if err != nil {
-			stats.Record(ctx, metrics.ReceivedMessageErrors.M(1))
+			dht.statsRecord(ctx, metrics.ReceivedMessageErrors.M(1))
 			logger.Debugf("error writing response: %v", err)
 			return false
 		}
 
 		elapsedTime := time.Since(startTime)
 		latencyMillis := float64(elapsedTime) / float64(time.Millisecond)
-		stats.Record(ctx, metrics.InboundRequestLatency.M(latencyMillis))
+		dht.statsRecord(ctx, metrics.InboundRequestLatency.M(latencyMillis))
 	}
 }
 
 // sendRequest sends out a request, but also makes sure to
 // measure the RTT for latency measurements.
 func (dht *IpfsDHT) sendRequest(ctx context.Context, p peer.ID, pmes *pb.Message) (*pb.Message, error) {
-	ctx, _ = tag.New(ctx, metrics.UpsertMessageType(pmes))
+	ctx, _ = dht.tagNew(ctx, metrics.UpsertMessageType(pmes))
 
 	ms, err := dht.messageSenderForPeer(ctx, p)
 	if err != nil {
-		stats.Record(ctx, metrics.SentRequestErrors.M(1))
+		dht.statsRecord(ctx, metrics.SentRequestErrors.M(1))
 		return nil, err
 	}
 
@@ -161,14 +161,14 @@ func (dht *IpfsDHT) sendRequest(ctx context.Context, p peer.ID, pmes *pb.Message
 
 	rpmes, err := ms.SendRequest(ctx, pmes)
 	if err != nil {
-		stats.Record(ctx, metrics.SentRequestErrors.M(1))
+		dht.statsRecord(ctx, metrics.SentRequestErrors.M(1))
 		return nil, err
 	}
 
 	// update the peer (on valid msgs only)
 	dht.updateFromMessage(ctx, p, rpmes)
 
-	stats.Record(
+	dht.statsRecord(
 		ctx,
 		metrics.SentRequests.M(1),
 		metrics.SentBytes.M(int64(pmes.Size())),
@@ -183,20 +183,20 @@ func (dht *IpfsDHT) sendRequest(ctx context.Context, p peer.ID, pmes *pb.Message
 
 // sendMessage sends out a message
 func (dht *IpfsDHT) sendMessage(ctx context.Context, p peer.ID, pmes *pb.Message) error {
-	ctx, _ = tag.New(ctx, metrics.UpsertMessageType(pmes))
+	ctx, _ = dht.tagNew(ctx, metrics.UpsertMessageType(pmes))
 
 	ms, err := dht.messageSenderForPeer(ctx, p)
 	if err != nil {
-		stats.Record(ctx, metrics.SentMessageErrors.M(1))
+		dht.statsRecord(ctx, metrics.SentMessageErrors.M(1))
 		return err
 	}
 
 	if err := ms.SendMessage(ctx, pmes); err != nil {
-		stats.Record(ctx, metrics.SentMessageErrors.M(1))
+		dht.statsRecord(ctx, metrics.SentMessageErrors.M(1))
 		return err
 	}
 
-	stats.Record(
+	dht.statsRecord(
 		ctx,
 		metrics.SentMessages.M(1),
 		metrics.SentBytes.M(int64(pmes.Size())),
@@ -421,3 +421,26 @@ func (ms *messageSender) ctxReadMsg(ctx context.Context, mes *pb.Message) error 
 		return ErrReadTimeout
 	}
 }
+
+// add by liangc : control metric >>>>
+func (dht *IpfsDHT) statsRecordWithTags(ctx context.Context, mutators []tag.Mutator, ms ...stats.Measurement) error {
+	if dht.enableMetric {
+		return stats.RecordWithTags(ctx, mutators, ms...)
+	}
+	return nil
+}
+
+func (dht *IpfsDHT) statsRecord(ctx context.Context, ms ...stats.Measurement) {
+	if dht.enableMetric {
+		stats.Record(ctx, ms...)
+	}
+}
+
+func (dht *IpfsDHT) tagNew(ctx context.Context, mutator ...tag.Mutator) (context.Context, error) {
+	if dht.enableMetric {
+		return tag.New(ctx, mutator...)
+	}
+	return ctx, nil
+}
+
+// add by liangc : control metric <<<<
