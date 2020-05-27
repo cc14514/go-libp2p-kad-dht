@@ -54,7 +54,7 @@ func TestHungRequest(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := d.GetClosestPeers(ctx1, testCaseCids[0].KeyString())
+		_, err := d.GetClosestPeers(ctx1, testCaseCids[0].KeyString(),false)
 		done <- err
 	}()
 

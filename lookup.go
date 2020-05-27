@@ -71,7 +71,8 @@ func (lk loggableKeyBytes) String() string {
 //
 // If the context is canceled, this function will return the context error along
 // with the closest K peers it has found so far.
-func (dht *IpfsDHT) GetClosestPeers(ctx context.Context, key string) (<-chan peer.ID, error) {
+// add by liangc : append world arg
+func (dht *IpfsDHT) GetClosestPeers(ctx context.Context, key string, world bool) (<-chan peer.ID, error) {
 	if key == "" {
 		return nil, fmt.Errorf("can't lookup empty key")
 	}
@@ -84,7 +85,7 @@ func (dht *IpfsDHT) GetClosestPeers(ctx context.Context, key string) (<-chan pee
 				ID:   p,
 			})
 
-			pmes, err := dht.findPeerSingle(ctx, p, peer.ID(key))
+			pmes, err := dht.findPeerSingle(ctx, p, peer.ID(key), world)
 			if err != nil {
 				logger.Debugf("error getting closer peers: %s", err)
 				return nil, err
@@ -100,7 +101,7 @@ func (dht *IpfsDHT) GetClosestPeers(ctx context.Context, key string) (<-chan pee
 
 			return peers, err
 		},
-		func() bool { return false },
+		func() bool { return false }, world,
 	)
 
 	if err != nil {
@@ -116,7 +117,12 @@ func (dht *IpfsDHT) GetClosestPeers(ctx context.Context, key string) (<-chan pee
 
 	if ctx.Err() == nil && lookupRes.completed {
 		// refresh the cpl for this key as the query was successful
-		dht.routingTable.ResetCplRefreshedAtForID(kb.ConvertKey(key), time.Now())
+		// add by liangc
+		if world {
+			dht.worldRoutingTable.ResetCplRefreshedAtForID(kb.ConvertKey(key), time.Now())
+		} else {
+			dht.routingTable.ResetCplRefreshedAtForID(kb.ConvertKey(key), time.Now())
+		}
 	}
 
 	return out, ctx.Err()

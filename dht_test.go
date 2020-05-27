@@ -498,7 +498,7 @@ func TestGetValues(t *testing.T) {
 
 	ctxT, cancel = context.WithTimeout(ctx, time.Second*2)
 	defer cancel()
-	vals, err := dhtA.GetValues(ctxT, "/v/hello", 16)
+	vals, err := dhtA.GetValues(ctxT, "/v/hello", 16, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1357,7 +1357,7 @@ func TestFindPeerQuery(t *testing.T) {
 // NOTE: You must have ATLEAST (minRTRefreshThreshold+1) test peers before using this.
 func testFindPeerQuery(t *testing.T,
 	bootstrappers, // Number of nodes connected to the querying node
-	leafs, // Number of nodes that might be connected to from the bootstrappers
+	leafs,         // Number of nodes that might be connected to from the bootstrappers
 	bootstrapperLeafConns int, // Number of connections each bootstrapper has to the leaf nodes
 ) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1408,7 +1408,7 @@ func testFindPeerQuery(t *testing.T,
 	val := "foobar"
 	rtval := kb.ConvertKey(val)
 
-	out, err := guy.GetClosestPeers(ctx, val)
+	out, err := guy.GetClosestPeers(ctx, val, false)
 	require.NoError(t, err)
 
 	var outpeers []peer.ID
@@ -1444,7 +1444,7 @@ func TestFindClosestPeers(t *testing.T) {
 	}
 
 	querier := dhts[1]
-	peers, err := querier.GetClosestPeers(ctx, "foo")
+	peers, err := querier.GetClosestPeers(ctx, "foo", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1905,7 +1905,7 @@ func TestInvalidKeys(t *testing.T) {
 	}
 
 	querier := dhts[0]
-	_, err := querier.GetClosestPeers(ctx, "")
+	_, err := querier.GetClosestPeers(ctx, "", false)
 	if err == nil {
 		t.Fatal("get closest peers should have failed")
 	}
@@ -1956,4 +1956,19 @@ func TestRoutingFilter(t *testing.T) {
 		t.Fatal(ctx.Err())
 	case <-time.After(time.Millisecond * 200):
 	}
+}
+
+func TestCtx(t *testing.T) {
+	ctx := context.Background()
+
+	f1 := func(ctx context.Context) {
+		ctx = context.WithValue(ctx, "foo", "bar")
+		fmt.Println("f1", ctx.Value("foo"))
+	}
+	f2 := func(ctx context.Context) {
+		fmt.Println("f2", ctx.Value("foo"))
+	}
+
+	f1(ctx)
+	f2(ctx)
 }

@@ -22,6 +22,7 @@ import (
 // dhthandler specifies the signature of functions that handle DHT messages.
 type dhtHandler func(context.Context, peer.ID, *pb.Message) (*pb.Message, error)
 
+/*
 func (dht *IpfsDHT) handlerForMsgType(t pb.Message_MessageType) dhtHandler {
 	switch t {
 	case pb.Message_FIND_NODE:
@@ -44,6 +45,37 @@ func (dht *IpfsDHT) handlerForMsgType(t pb.Message_MessageType) dhtHandler {
 		case pb.Message_ADD_PROVIDER:
 			return dht.handleAddProvider
 		case pb.Message_GET_PROVIDERS:
+			return dht.handleGetProviders
+		}
+	}
+
+	return nil
+}
+*/
+
+// add by liangc : for ddht
+func (dht *IpfsDHT) handlerForMsgType(t pb.Message_MessageType) dhtHandler {
+	switch t {
+	case pb.Message_FIND_NODE, pb.Message_WORLD_FIND_NODE:
+		return dht.handleFindPeer
+	case pb.Message_PING:
+		return dht.handlePing
+	}
+
+	if dht.enableValues {
+		switch t {
+		case pb.Message_GET_VALUE, pb.Message_WORLD_GET_VALUE:
+			return dht.handleGetValue
+		case pb.Message_PUT_VALUE, pb.Message_WORLD_PUT_VALUE:
+			return dht.handlePutValue
+		}
+	}
+
+	if dht.enableProviders {
+		switch t {
+		case pb.Message_ADD_PROVIDER, pb.Message_WORLD_ADD_PROVIDER:
+			return dht.handleAddProvider
+		case pb.Message_GET_PROVIDERS, pb.Message_WORLD_GET_PROVIDERS:
 			return dht.handleGetProviders
 		}
 	}
