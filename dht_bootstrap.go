@@ -3,6 +3,7 @@ package dht
 import (
 	"context"
 	"fmt"
+	"github.com/multiformats/go-multiaddr"
 	"time"
 
 	multierror "github.com/hashicorp/go-multierror"
@@ -10,7 +11,6 @@ import (
 	processctx "github.com/jbenet/goprocess/context"
 	"github.com/libp2p/go-libp2p-core/peer"
 	kbucket "github.com/libp2p/go-libp2p-kbucket"
-	"github.com/multiformats/go-multiaddr"
 )
 
 // DefaultBootstrapPeers is a set of public DHT bootstrap peers provided by libp2p.
@@ -23,21 +23,21 @@ var minRTRefreshThreshold = 10
 // timeout for pinging one peer
 const peerPingTimeout = 10 * time.Second
 
-func init() {
-	for _, s := range []string{
-		"/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
-		"/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
-		"/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
-		"/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
-		"/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
-	} {
-		ma, err := multiaddr.NewMultiaddr(s)
-		if err != nil {
-			panic(err)
-		}
-		DefaultBootstrapPeers = append(DefaultBootstrapPeers, ma)
-	}
-}
+//func init() {
+//	for _, s := range []string{
+//		"/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+//		"/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+//		"/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+//		"/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+//		"/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
+//	} {
+//		ma, err := multiaddr.NewMultiaddr(s)
+//		if err != nil {
+//			panic(err)
+//		}
+//		DefaultBootstrapPeers = append(DefaultBootstrapPeers, ma)
+//	}
+//}
 
 // startSelfLookup starts a go-routine that listens for requests to trigger a self walk on a dedicated channel
 // and then sends the error status back on the error channel sent along with the request.
