@@ -590,7 +590,7 @@ func (dht *IpfsDHT) peerFound(ctx context.Context, p peer.ID, queryPeer bool) {
 				return
 			}
 			newlyAdded, err := rt.TryAddPeer(p, queryPeer)
-			fmt.Println("Add_RoutingTable ==>", err, dht.host.ID().Pretty(), mygid, "->", p.Pretty(), gid, " ; err=", newlyAdded, err)
+			log.Debugf("Add_RoutingTable ==> err=%v, newlyAdded=%v , (myid=%s, mygid=%s) , (id=%s, gid=%s) ", err, newlyAdded, dht.host.ID().Pretty(), mygid, p.Pretty(), gid)
 			if err != nil {
 				// peer not added.
 				return
@@ -693,7 +693,7 @@ func (dht *IpfsDHT) findPeerSingle(ctx context.Context, p peer.ID, id peer.ID) (
 */
 
 // add by liangc : append world arg
-func (dht *IpfsDHT) findProvidersSingle(ctx context.Context, p peer.ID, key multihash.Multihash,world bool) (*pb.Message, error) {
+func (dht *IpfsDHT) findProvidersSingle(ctx context.Context, p peer.ID, key multihash.Multihash, world bool) (*pb.Message, error) {
 	pmes := pb.NewMessage(pb.Message_GET_PROVIDERS, key, 0)
 	// add by liangc
 	if world {
@@ -901,28 +901,22 @@ func isWorldMes(pmes *pb.Message) bool {
 		pb.Message_WORLD_ADD_PROVIDER,
 		pb.Message_WORLD_GET_PROVIDERS,
 		pb.Message_WORLD_FIND_NODE:
-		log.Infof("isWorldMes-->true")
 		return true
 	}
-	log.Infof("isWorldMes-->false")
 	return false
 }
 
 func isWorldCtx(ctx context.Context) bool {
 	if ctx.Value("world") != nil {
-		log.Infof("isWorldCtx-->true")
 		return true
 	}
-	log.Infof("isWorldCtx-->false")
 	return false
 }
 
 func isWorldOption(cfg routing.Options) bool {
 	if cfg.Other != nil && cfg.Other["world"] != nil {
-		log.Infof("isWorldOption-->true")
 		return true
 	}
-	log.Infof("isWorldOption-->false")
 	return false
 }
 
