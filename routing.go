@@ -609,7 +609,7 @@ func (dht *IpfsDHT) findProvidersAsyncRoutine(ctx context.Context, key multihash
 
 			// add by liangc : check and set timeout whitch the key on os.env >>>>
 			if v := os.Getenv(key.String()); v != "" {
-				logger.Infof("findProvidersAsyncRoutine : set-dial-timeout %s , k=%s , v=%v , timtoue=3s", p.Pretty(), key.String(), v)
+				logger.Debugf("findProvidersAsyncRoutine : set-dial-timeout %s , k=%s , v=%v , timtoue=3s , world=%v", p.Pretty(), key.String(), v, world)
 				ctx = network.WithDialPeerTimeout(ctx, 3*time.Second)
 			}
 			// add by liangc : check and set timeout whitch the key on os.env <<<<
