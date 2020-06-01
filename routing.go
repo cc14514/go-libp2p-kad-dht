@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -526,7 +527,6 @@ func (dht *IpfsDHT) FindProvidersAsync(ctx context.Context, key cid.Cid, count i
 
 func (dht *IpfsDHT) findProvidersAsyncRoutine(ctx context.Context, key multihash.Multihash, count int, peerOut chan peer.AddrInfo) {
 	logger.Debugw("finding providers", "key", key)
-
 	defer close(peerOut)
 
 	findAll := count == 0
@@ -563,6 +563,12 @@ func (dht *IpfsDHT) findProvidersAsyncRoutine(ctx context.Context, key multihash
 				Type: routing.SendingQuery,
 				ID:   p,
 			})
+			// add by liangc : check and set timeout whitch the key on os.env >>>>
+			if v := os.Getenv(key.String()); v != "" {
+				logger.Debugf("findProvidersAsyncRoutine : set-dial-timeout %s , k=%s , v=%v , timtoue=3s", p.Pretty(), key.String(), v)
+				ctx = network.WithDialPeerTimeout(ctx, 3*time.Second)
+			}
+			// add by liangc : check and set timeout whitch the key on os.env <<<<
 
 			pmes, err := dht.findProvidersSingle(ctx, p, key)
 			if err != nil {
