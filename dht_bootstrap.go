@@ -3,7 +3,6 @@ package dht
 import (
 	"context"
 	"fmt"
-	"github.com/multiformats/go-multiaddr"
 	"time"
 
 	multierror "github.com/hashicorp/go-multierror"
@@ -11,6 +10,7 @@ import (
 	processctx "github.com/jbenet/goprocess/context"
 	"github.com/libp2p/go-libp2p-core/peer"
 	kbucket "github.com/libp2p/go-libp2p-kbucket"
+	"github.com/multiformats/go-multiaddr"
 )
 
 // DefaultBootstrapPeers is a set of public DHT bootstrap peers provided by libp2p.
@@ -23,21 +23,21 @@ var minRTRefreshThreshold = 10
 // timeout for pinging one peer
 const peerPingTimeout = 10 * time.Second
 
-//func init() {
-//	for _, s := range []string{
-//		"/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
-//		"/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
-//		"/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
-//		"/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
-//		"/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
-//	} {
-//		ma, err := multiaddr.NewMultiaddr(s)
-//		if err != nil {
-//			panic(err)
-//		}
-//		DefaultBootstrapPeers = append(DefaultBootstrapPeers, ma)
-//	}
-//}
+func init() {
+	for _, s := range []string{
+		"/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+		"/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+		"/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+		"/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+		"/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
+	} {
+		ma, err := multiaddr.NewMultiaddr(s)
+		if err != nil {
+			panic(err)
+		}
+		DefaultBootstrapPeers = append(DefaultBootstrapPeers, ma)
+	}
+}
 
 // startSelfLookup starts a go-routine that listens for requests to trigger a self walk on a dedicated channel
 // and then sends the error status back on the error channel sent along with the request.
@@ -59,26 +59,15 @@ func (dht *IpfsDHT) startSelfLookup() {
 			// batch multiple refresh requests if they're all waiting at the same time.
 			waiting = append(waiting, collectWaitingChannels(dht.triggerSelfLookup)...)
 
-			// add by liangc >>>>
-			fn := func(world bool) error {
-				// Do a self walk
-				queryCtx, cancel := context.WithTimeout(ctx, dht.rtRefreshQueryTimeout)
-				_, err := dht.GetClosestPeers(queryCtx, string(dht.self), world)
-				if err == kbucket.ErrLookupFailure {
-					err = nil
-				} else if err != nil {
-					err = fmt.Errorf("failed to query self during routing table refresh: %s", err)
-				}
-				cancel()
-				return err
+			// Do a self walk
+			queryCtx, cancel := context.WithTimeout(ctx, dht.rtRefreshQueryTimeout)
+			_, err := dht.GetClosestPeers(queryCtx, string(dht.self))
+			if err == kbucket.ErrLookupFailure {
+				err = nil
+			} else if err != nil {
+				err = fmt.Errorf("failed to query self during routing table refresh: %s", err)
 			}
-			err1 := fn(true)
-			err2 := fn(false)
-			err := err1
-			if err == nil {
-				err = err2
-			}
-			// add by liangc <<<<
+			cancel()
 
 			// send back the error status
 			for _, w := range waiting {
@@ -136,17 +125,14 @@ func (dht *IpfsDHT) startRefreshing() {
 				logger.Warnw("failed when refreshing routing table", "error", err)
 			}
 
-			// add by liangc : for ddht
 			// ping Routing Table peers that haven't been hear of/from in the interval they should have been.
-			for _, ps := range append(dht.routingTable.GetPeerInfos(), dht.worldRoutingTable.GetPeerInfos()...) {
+			for _, ps := range dht.routingTable.GetPeerInfos() {
 				// ping the peer if it's due for a ping and evict it if the ping fails
 				if time.Since(ps.LastSuccessfulOutboundQueryAt) > dht.successfulOutboundQueryGracePeriod {
 					livelinessCtx, cancel := context.WithTimeout(ctx, peerPingTimeout)
 					if err := dht.host.Connect(livelinessCtx, peer.AddrInfo{ID: ps.Id}); err != nil {
 						logger.Debugw("evicting peer after failed ping", "peer", ps.Id, "error", err)
 						dht.routingTable.RemovePeer(ps.Id)
-						// add by liangc
-						dht.worldRoutingTable.RemovePeer(ps.Id)
 					}
 					cancel()
 				}
@@ -191,81 +177,20 @@ func (dht *IpfsDHT) doRefresh(ctx context.Context) error {
 		return ctx.Err()
 	}
 
-	if err := dht.refreshCpls(ctx, true); err != nil {
-		merr = multierror.Append(merr, err)
-	}
-	// add by liangc
-	if err := dht.refreshCpls(ctx, false); err != nil {
+	if err := dht.refreshCpls(ctx); err != nil {
 		merr = multierror.Append(merr, err)
 	}
 	return merr
 }
 
-// add by liangc : for ddht
-// refreshCpls scans the routing table, and does a random walk for cpl's that haven't been queried since the given period
-func (dht *IpfsDHT) refreshCpls(ctx context.Context, world bool) error {
-	doQuery := func(cpl uint, target string, f func(context.Context) error) error {
-		// add by liangc
-		logger.Infof("starting refreshing cpl %d to %s (routing table size was {world: %d, normal: %d})", cpl, target, dht.worldRoutingTable.Size(), dht.routingTable.Size())
-
-		defer func() {
-			// add by liangc
-			logger.Infof("finished refreshing cpl %d to %s (routing table size is now {world: %d, normal: %d})", cpl, target, dht.worldRoutingTable.Size(), dht.routingTable.Size())
-		}()
-		queryCtx, cancel := context.WithTimeout(ctx, dht.rtRefreshQueryTimeout)
-		defer cancel()
-		err := f(queryCtx)
-		if err == context.DeadlineExceeded && queryCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
-			return nil
-		}
-		return err
-	}
-	walk := func(world bool) error {
-		var merr error
-		rt := dht.routingTable
-		if world {
-			rt = dht.worldRoutingTable
-		}
-		trackedCpls := rt.GetTrackedCplsForRefresh()
-		for cpl, lastRefreshedAt := range trackedCpls {
-			if time.Since(lastRefreshedAt) <= dht.rtRefreshInterval {
-				continue
-			}
-
-			// gen rand peer with the cpl
-			randPeer, err := rt.GenRandPeerID(uint(cpl))
-			if err != nil {
-				logger.Errorw("failed to generate peer ID", "cpl", cpl, "error", err)
-				continue
-			}
-			// walk to the generated peer
-			walkFnc := func(c context.Context) error {
-				_, err := dht.GetClosestPeers(c, string(randPeer), world)
-				return err
-			}
-
-			if err := doQuery(uint(cpl), randPeer.String(), walkFnc); err != nil {
-				merr = multierror.Append(
-					merr,
-					fmt.Errorf("failed to do a random walk for cpl %d: %w", cpl, err),
-				)
-			}
-		}
-		return merr
-	}
-	return walk(world)
-}
-
-/*
 // refreshCpls scans the routing table, and does a random walk for cpl's that haven't been queried since the given period
 func (dht *IpfsDHT) refreshCpls(ctx context.Context) error {
 	doQuery := func(cpl uint, target string, f func(context.Context) error) error {
-		// add by liangc
-		logger.Infof("starting refreshing cpl %d to %s (routing table size was {world: %d, normal: %d})", cpl, target, dht.worldRoutingTable.Size(), dht.routingTable.Size())
-
+		logger.Infof("starting refreshing cpl %d to %s (routing table size was %d)",
+			cpl, target, dht.routingTable.Size())
 		defer func() {
-			// add by liangc
-			logger.Infof("finished refreshing cpl %d to %s (routing table size is now {world: %d, normal: %d})", cpl, target, dht.worldRoutingTable.Size(), dht.routingTable.Size())
+			logger.Infof("finished refreshing cpl %d to %s (routing table size is now %d)",
+				cpl, target, dht.routingTable.Size())
 		}()
 		queryCtx, cancel := context.WithTimeout(ctx, dht.rtRefreshQueryTimeout)
 		defer cancel()
@@ -306,7 +231,6 @@ func (dht *IpfsDHT) refreshCpls(ctx context.Context) error {
 	}
 	return merr
 }
-*/
 
 // Bootstrap tells the DHT to get into a bootstrapped state satisfying the
 // IpfsRouter interface.

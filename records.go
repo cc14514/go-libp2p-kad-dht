@@ -18,8 +18,7 @@ type pubkrs struct {
 // GetPublicKey gets the public key when given a Peer ID. It will extract from
 // the Peer ID if inlined or ask the node it belongs to or ask the DHT.
 func (dht *IpfsDHT) GetPublicKey(ctx context.Context, p peer.ID) (ci.PubKey, error) {
-	world := isWorldCtx(ctx) // add by liangc
-	logger.Debugf("getPublicKey for (world:%v): %s", world, p)
+	logger.Debugf("getPublicKey for: %s", p)
 
 	// Check locally. Will also try to extract the public key from the peer
 	// ID itself if possible (if inlined).
@@ -34,7 +33,7 @@ func (dht *IpfsDHT) GetPublicKey(ctx context.Context, p peer.ID) (ci.PubKey, err
 	defer cancel()
 	resp := make(chan pubkrs, 2)
 	go func() {
-		pubk, err := dht.getPublicKeyFromNode(ctx, p, world) // add by liangc
+		pubk, err := dht.getPublicKeyFromNode(ctx, p)
 		resp <- pubkrs{pubk, err}
 	}()
 
@@ -90,8 +89,7 @@ func (dht *IpfsDHT) getPublicKeyFromDHT(ctx context.Context, p peer.ID) (ci.PubK
 	return pubk, nil
 }
 
-// add by liangc : append world arg
-func (dht *IpfsDHT) getPublicKeyFromNode(ctx context.Context, p peer.ID, world bool) (ci.PubKey, error) {
+func (dht *IpfsDHT) getPublicKeyFromNode(ctx context.Context, p peer.ID) (ci.PubKey, error) {
 	// check locally, just in case...
 	pk := dht.peerstore.PubKey(p)
 	if pk != nil {
@@ -100,7 +98,7 @@ func (dht *IpfsDHT) getPublicKeyFromNode(ctx context.Context, p peer.ID, world b
 
 	// Get the key from the node itself
 	pkkey := routing.KeyForPublicKey(p)
-	pmes, err := dht.getValueSingle(ctx, p, pkkey, world) // add by liangc
+	pmes, err := dht.getValueSingle(ctx, p, pkkey)
 	if err != nil {
 		return nil, err
 	}

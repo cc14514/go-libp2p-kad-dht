@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
@@ -29,21 +28,6 @@ import (
 // PutValue adds value corresponding to given Key.
 // This is the top level "Store" operation of the DHT
 func (dht *IpfsDHT) PutValue(ctx context.Context, key string, value []byte, opts ...routing.Option) (err error) {
-	// add by liangc >>>>
-	var cfg routing.Options
-	if err := cfg.Apply(opts...); err != nil {
-		return err
-	}
-
-	world := isWorldOption(cfg)
-	if !world {
-		world = isWorldCtx(ctx)
-	}
-	if world {
-		ctx = context.WithValue(ctx, "world", "world")
-	}
-	// add by liangc <<<<
-
 	if !dht.enableValues {
 		return routing.ErrNotSupported
 	}
@@ -80,7 +64,7 @@ func (dht *IpfsDHT) PutValue(ctx context.Context, key string, value []byte, opts
 		return err
 	}
 
-	pchan, err := dht.GetClosestPeers(ctx, key, world)
+	pchan, err := dht.GetClosestPeers(ctx, key)
 	if err != nil {
 		return err
 	}
@@ -96,6 +80,7 @@ func (dht *IpfsDHT) PutValue(ctx context.Context, key string, value []byte, opts
 				Type: routing.Value,
 				ID:   p,
 			})
+
 			err := dht.putValueToPeer(ctx, p, rec)
 			if err != nil {
 				logger.Debugf("failed putting value to peer: %s", err)
@@ -149,20 +134,13 @@ func (dht *IpfsDHT) GetValue(ctx context.Context, key string, opts ...routing.Op
 
 // SearchValue searches for the value corresponding to given Key and streams the results.
 func (dht *IpfsDHT) SearchValue(ctx context.Context, key string, opts ...routing.Option) (<-chan []byte, error) {
-	// add by liangc >>>>
+	if !dht.enableValues {
+		return nil, routing.ErrNotSupported
+	}
+
 	var cfg routing.Options
 	if err := cfg.Apply(opts...); err != nil {
 		return nil, err
-	}
-
-	world := isWorldOption(cfg)
-	if !world {
-		world = isWorldCtx(ctx)
-	}
-	// add by liangc <<<<
-
-	if !dht.enableValues {
-		return nil, routing.ErrNotSupported
 	}
 
 	responsesNeeded := 0
@@ -171,7 +149,7 @@ func (dht *IpfsDHT) SearchValue(ctx context.Context, key string, opts ...routing
 	}
 
 	stopCh := make(chan struct{})
-	valCh, lookupRes := dht.getValues(ctx, key, stopCh, world)
+	valCh, lookupRes := dht.getValues(ctx, key, stopCh)
 
 	out := make(chan []byte)
 	go func() {
@@ -197,7 +175,7 @@ func (dht *IpfsDHT) SearchValue(ctx context.Context, key string, opts ...routing
 			return
 		}
 
-		dht.updatePeerValues(dht.Context(), key, best, updatePeers, world)
+		dht.updatePeerValues(dht.Context(), key, best, updatePeers)
 	}()
 
 	return out, nil
@@ -226,15 +204,14 @@ func (dht *IpfsDHT) searchValueQuorum(ctx context.Context, key string, valCh <-c
 }
 
 // GetValues gets nvals values corresponding to the given key.
-// add by liangc : append world arg
-func (dht *IpfsDHT) GetValues(ctx context.Context, key string, nvals int, world bool) (_ []RecvdVal, err error) {
+func (dht *IpfsDHT) GetValues(ctx context.Context, key string, nvals int) (_ []RecvdVal, err error) {
 	if !dht.enableValues {
 		return nil, routing.ErrNotSupported
 	}
 
 	queryCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	valCh, _ := dht.getValues(queryCtx, key, nil, world)
+	valCh, _ := dht.getValues(queryCtx, key, nil)
 
 	out := make([]RecvdVal, 0, nvals)
 	for val := range valCh {
@@ -290,14 +267,8 @@ loop:
 	return
 }
 
-// add by liangc : append world arg
-func (dht *IpfsDHT) updatePeerValues(ctx context.Context, key string, val []byte, peers []peer.ID, world bool) {
+func (dht *IpfsDHT) updatePeerValues(ctx context.Context, key string, val []byte, peers []peer.ID) {
 	fixupRec := record.MakePutRecord(key, val)
-	// add by liangc >>>>
-	if world {
-		ctx = context.WithValue(ctx, "world", "world")
-	}
-	// add by liangc <<<<
 	for _, p := range peers {
 		go func(p peer.ID) {
 			//TODO: Is this possible?
@@ -318,8 +289,7 @@ func (dht *IpfsDHT) updatePeerValues(ctx context.Context, key string, val []byte
 	}
 }
 
-// add by liangc : append world arg
-func (dht *IpfsDHT) getValues(ctx context.Context, key string, stopQuery chan struct{}, world bool) (<-chan RecvdVal, <-chan *lookupWithFollowupResult) {
+func (dht *IpfsDHT) getValues(ctx context.Context, key string, stopQuery chan struct{}) (<-chan RecvdVal, <-chan *lookupWithFollowupResult) {
 	valCh := make(chan RecvdVal, 1)
 	lookupResCh := make(chan *lookupWithFollowupResult, 1)
 
@@ -346,7 +316,7 @@ func (dht *IpfsDHT) getValues(ctx context.Context, key string, stopQuery chan st
 					ID:   p,
 				})
 
-				rec, peers, err := dht.getValueOrPeers(ctx, p, key, world)
+				rec, peers, err := dht.getValueOrPeers(ctx, p, key)
 				switch err {
 				case routing.ErrNotFound:
 					// in this case, they responded with nothing,
@@ -394,7 +364,7 @@ func (dht *IpfsDHT) getValues(ctx context.Context, key string, stopQuery chan st
 				default:
 					return false
 				}
-			}, world,
+			},
 		)
 
 		if err != nil {
@@ -403,22 +373,17 @@ func (dht *IpfsDHT) getValues(ctx context.Context, key string, stopQuery chan st
 		lookupResCh <- lookupRes
 
 		if ctx.Err() == nil {
-			dht.refreshRTIfNoShortcut(kb.ConvertKey(key), lookupRes, world)
+			dht.refreshRTIfNoShortcut(kb.ConvertKey(key), lookupRes)
 		}
 	}()
 
 	return valCh, lookupResCh
 }
 
-// add by liangc : append world arg
-func (dht *IpfsDHT) refreshRTIfNoShortcut(key kb.ID, lookupRes *lookupWithFollowupResult, world bool) {
+func (dht *IpfsDHT) refreshRTIfNoShortcut(key kb.ID, lookupRes *lookupWithFollowupResult) {
 	if lookupRes.completed {
 		// refresh the cpl for this key as the query was successful
-		if world {
-			dht.worldRoutingTable.ResetCplRefreshedAtForID(key, time.Now())
-		} else {
-			dht.routingTable.ResetCplRefreshedAtForID(key, time.Now())
-		}
+		dht.routingTable.ResetCplRefreshedAtForID(key, time.Now())
 	}
 }
 
@@ -428,7 +393,6 @@ func (dht *IpfsDHT) refreshRTIfNoShortcut(key kb.ID, lookupRes *lookupWithFollow
 
 // Provide makes this node announce that it can provide a value for the given key
 func (dht *IpfsDHT) Provide(ctx context.Context, key cid.Cid, brdcst bool) (err error) {
-	world := isWorldCtx(ctx) // add by liangc
 	if !dht.enableProviders {
 		return routing.ErrNotSupported
 	} else if !key.Defined() {
@@ -466,7 +430,7 @@ func (dht *IpfsDHT) Provide(ctx context.Context, key cid.Cid, brdcst bool) (err 
 	}
 
 	var exceededDeadline bool
-	peers, err := dht.GetClosestPeers(closerCtx, string(keyMH), isWorldCtx(ctx)) // add by liangc
+	peers, err := dht.GetClosestPeers(closerCtx, string(keyMH))
 	switch err {
 	case context.DeadlineExceeded:
 		// If the _inner_ deadline has been exceeded but the _outer_
@@ -481,7 +445,7 @@ func (dht *IpfsDHT) Provide(ctx context.Context, key cid.Cid, brdcst bool) (err 
 		return err
 	}
 
-	mes, err := dht.makeProvRecord(keyMH, world) // add by liangc
+	mes, err := dht.makeProvRecord(keyMH)
 	if err != nil {
 		return err
 	}
@@ -504,9 +468,7 @@ func (dht *IpfsDHT) Provide(ctx context.Context, key cid.Cid, brdcst bool) (err 
 	}
 	return ctx.Err()
 }
-
-// add by liangc : append world arg
-func (dht *IpfsDHT) makeProvRecord(key []byte, world bool) (*pb.Message, error) {
+func (dht *IpfsDHT) makeProvRecord(key []byte) (*pb.Message, error) {
 	pi := peer.AddrInfo{
 		ID:    dht.self,
 		Addrs: dht.host.Addrs(),
@@ -519,10 +481,6 @@ func (dht *IpfsDHT) makeProvRecord(key []byte, world bool) (*pb.Message, error) 
 	}
 
 	pmes := pb.NewMessage(pb.Message_ADD_PROVIDER, key, 0)
-	// add by liangc
-	if world {
-		pmes = pb.NewMessage(pb.Message_WORLD_ADD_PROVIDER, key, 0)
-	}
 	pmes.ProviderPeers = pb.RawPeerInfosToPBPeers([]peer.AddrInfo{pi})
 	return pmes, nil
 }
@@ -562,12 +520,11 @@ func (dht *IpfsDHT) FindProvidersAsync(ctx context.Context, key cid.Cid, count i
 
 	keyMH := key.Hash()
 
-	go dht.findProvidersAsyncRoutine(ctx, keyMH, count, peerOut, isWorldCtx(ctx))
+	go dht.findProvidersAsyncRoutine(ctx, keyMH, count, peerOut)
 	return peerOut
 }
 
-// add by liangc : append world arg
-func (dht *IpfsDHT) findProvidersAsyncRoutine(ctx context.Context, key multihash.Multihash, count int, peerOut chan peer.AddrInfo, world bool) {
+func (dht *IpfsDHT) findProvidersAsyncRoutine(ctx context.Context, key multihash.Multihash, count int, peerOut chan peer.AddrInfo) {
 	logger.Debugw("finding providers", "key", key)
 
 	defer close(peerOut)
@@ -607,14 +564,7 @@ func (dht *IpfsDHT) findProvidersAsyncRoutine(ctx context.Context, key multihash
 				ID:   p,
 			})
 
-			// add by liangc : check and set timeout whitch the key on os.env >>>>
-			if v := os.Getenv(key.String()); v != "" {
-				logger.Debugf("findProvidersAsyncRoutine : set-dial-timeout %s , k=%s , v=%v , timtoue=3s , world=%v", p.Pretty(), key.String(), v, world)
-				ctx = network.WithDialPeerTimeout(ctx, 3*time.Second)
-			}
-			// add by liangc : check and set timeout whitch the key on os.env <<<<
-
-			pmes, err := dht.findProvidersSingle(ctx, p, key, world) // add by liangc
+			pmes, err := dht.findProvidersSingle(ctx, p, key)
 			if err != nil {
 				return nil, err
 			}
@@ -657,17 +607,16 @@ func (dht *IpfsDHT) findProvidersAsyncRoutine(ctx context.Context, key multihash
 		},
 		func() bool {
 			return !findAll && ps.Size() >= count
-		}, world,
+		},
 	)
 
 	if err == nil && ctx.Err() == nil {
-		dht.refreshRTIfNoShortcut(kb.ConvertKey(string(key)), lookupRes, world)
+		dht.refreshRTIfNoShortcut(kb.ConvertKey(string(key)), lookupRes)
 	}
 }
 
 // FindPeer searches for a peer with given ID.
 func (dht *IpfsDHT) FindPeer(ctx context.Context, id peer.ID) (_ peer.AddrInfo, err error) {
-	world := isWorldCtx(ctx) // add by liangc
 	if err := id.Validate(); err != nil {
 		return peer.AddrInfo{}, err
 	}
@@ -678,6 +627,7 @@ func (dht *IpfsDHT) FindPeer(ctx context.Context, id peer.ID) (_ peer.AddrInfo, 
 	if pi := dht.FindLocal(id); pi.ID != "" {
 		return pi, nil
 	}
+
 	lookupRes, err := dht.runLookupWithFollowup(ctx, string(id),
 		func(ctx context.Context, p peer.ID) ([]*peer.AddrInfo, error) {
 			// For DHT query command
@@ -686,7 +636,7 @@ func (dht *IpfsDHT) FindPeer(ctx context.Context, id peer.ID) (_ peer.AddrInfo, 
 				ID:   p,
 			})
 
-			pmes, err := dht.findPeerSingle(ctx, p, id, world)
+			pmes, err := dht.findPeerSingle(ctx, p, id)
 			if err != nil {
 				logger.Debugf("error getting closer peers: %s", err)
 				return nil, err
@@ -704,7 +654,7 @@ func (dht *IpfsDHT) FindPeer(ctx context.Context, id peer.ID) (_ peer.AddrInfo, 
 		},
 		func() bool {
 			return dht.host.Network().Connectedness(id) == network.Connected
-		}, world,
+		},
 	)
 
 	if err != nil {

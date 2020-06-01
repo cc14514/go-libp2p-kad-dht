@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"gopkg.in/src-d/go-log.v1"
 	"math"
 	"sync"
 	"time"
@@ -68,8 +67,7 @@ type IpfsDHT struct {
 
 	datastore ds.Datastore // Local data
 
-	routingTable      *kb.RoutingTable // world dht : Array of routing tables for differently distanced nodes
-	worldRoutingTable *kb.RoutingTable // group dht
+	routingTable *kb.RoutingTable // Array of routing tables for differently distanced nodes
 	// ProviderManager stores & manages the provider records for this Dht peer.
 	ProviderManager *providers.ProviderManager
 
@@ -268,15 +266,9 @@ func makeDHT(ctx context.Context, h host.Host, cfg config) (*IpfsDHT, error) {
 		fixLowPeersChan:        make(chan struct{}),
 		enableMetric:           cfg.metrics, // add by liangc
 	}
-	// liangc : make ddht >>>>
-	wrt, err := makeRoutingTable(dht, cfg, true)
-	if err != nil {
-		return nil, fmt.Errorf("failed to construct world routing table,err=%s", err)
-	}
-	dht.worldRoutingTable = wrt
-	// liangc : make ddht <<<<
+
 	// construct routing table
-	rt, err := makeRoutingTable(dht, cfg, false)
+	rt, err := makeRoutingTable(dht, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to construct routing table,err=%s", err)
 	}
@@ -306,8 +298,7 @@ func makeDHT(ctx context.Context, h host.Host, cfg config) (*IpfsDHT, error) {
 	return dht, nil
 }
 
-/*
-func makeRoutingTable(dht *IpfsDHT, cfg config, world bool) (*kb.RoutingTable, error) {
+func makeRoutingTable(dht *IpfsDHT, cfg config) (*kb.RoutingTable, error) {
 	// The threshold is calculated based on the expected amount of time that should pass before we
 	// query a peer as part of our refresh cycle.
 	// To grok the Math Wizardy that produced these exact equations, please be patient as a document explaining it will
@@ -335,45 +326,6 @@ func makeRoutingTable(dht *IpfsDHT, cfg config, world bool) (*kb.RoutingTable, e
 
 	return rt, err
 }
-*/
-
-// add by liangc : make ddht
-func makeRoutingTable(dht *IpfsDHT, cfg config, world bool) (*kb.RoutingTable, error) {
-	// The threshold is calculated based on the expected amount of time that should pass before we
-	// query a peer as part of our refresh cycle.
-	// To grok the Math Wizardy that produced these exact equations, please be patient as a document explaining it will
-	// be published soon.
-	l1 := math.Log(float64(1) / float64(defaultBucketSize))                              //(Log(1/K))
-	l2 := math.Log(float64(1) - (float64(cfg.concurrency) / float64(defaultBucketSize))) // Log(1 - (alpha / K))
-	maxLastSuccessfulOutboundThreshold := time.Duration(l1 / l2 * float64(cfg.routingTable.refreshInterval))
-
-	self := kb.ConvertPeerID(dht.host.ID())
-
-	rt, err := kb.NewRoutingTable(cfg.bucketSize, self, time.Minute, dht.host.Peerstore(), maxLastSuccessfulOutboundThreshold)
-	dht.successfulOutboundQueryGracePeriod = maxLastSuccessfulOutboundThreshold
-	// TODO : cmgr 应该有两份
-	cmgr := dht.host.ConnManager()
-
-	tag := "kbucket"
-	weight := 2 * BaseConnMgrScore
-	if world {
-		tag = "world-kbucket"
-		weight = BaseConnMgrScore
-	}
-
-	rt.PeerAdded = func(p peer.ID) {
-		commonPrefixLen := kb.CommonPrefixLen(self, kb.ConvertPeerID(p))
-		cmgr.TagPeer(p, tag, weight+commonPrefixLen)
-	}
-	rt.PeerRemoved = func(p peer.ID) {
-		cmgr.UntagPeer(p, tag)
-
-		// try to fix the RT
-		dht.fixRTIfNeeded()
-	}
-
-	return rt, err
-}
 
 // Mode allows introspection of the operation mode of the DHT
 func (dht *IpfsDHT) Mode() ModeOpt {
@@ -388,16 +340,9 @@ func (dht *IpfsDHT) fixLowPeersRoutine(proc goprocess.Process) {
 		case <-proc.Closing():
 			return
 		}
-		// add by liangc : both fix world routingTable
-		if dht.routingTable.Size() > minRTRefreshThreshold &&
-			dht.worldRoutingTable.Size() > minRTRefreshThreshold {
+		if dht.routingTable.Size() > minRTRefreshThreshold {
 			continue
 		}
-		/*
-			if dht.routingTable.Size() > minRTRefreshThreshold {
-				continue
-			}
-		*/
 
 		for _, p := range dht.host.Network().Peers() {
 			dht.peerFound(dht.Context(), p, false)
@@ -413,7 +358,6 @@ func (dht *IpfsDHT) fixLowPeersRoutine(proc goprocess.Process) {
 
 }
 
-// add by liangc : for ddht
 // TODO This is hacky, horrible and the programmer needs to have his mother called a hamster.
 // SHOULD be removed once https://github.com/libp2p/go-libp2p/issues/800 goes in.
 func (dht *IpfsDHT) persistRTPeersInPeerStore() {
@@ -427,44 +371,15 @@ func (dht *IpfsDHT) persistRTPeersInPeerStore() {
 			for _, p := range ps {
 				dht.peerstore.UpdateAddrs(p, peerstore.RecentlyConnectedAddrTTL, peerstore.RecentlyConnectedAddrTTL)
 			}
-			ps = dht.worldRoutingTable.ListPeers()
-			for _, p := range ps {
-				dht.peerstore.UpdateAddrs(p, peerstore.RecentlyConnectedAddrTTL, peerstore.RecentlyConnectedAddrTTL)
-			}
 		case <-dht.ctx.Done():
 			return
 		}
 	}
 }
-
-/*
-func (dht *IpfsDHT) persistRTPeersInPeerStore() {
-	tickr := time.NewTicker(peerstore.RecentlyConnectedAddrTTL / 3)
-	defer tickr.Stop()
-
-	for {
-		select {
-		case <-tickr.C:
-			ps := dht.routingTable.ListPeers()
-			for _, p := range ps {
-				dht.peerstore.UpdateAddrs(p, peerstore.RecentlyConnectedAddrTTL, peerstore.RecentlyConnectedAddrTTL)
-			}
-		case <-dht.ctx.Done():
-			return
-		}
-	}
-}
-*/
 
 // putValueToPeer stores the given key/value pair at the peer 'p'
 func (dht *IpfsDHT) putValueToPeer(ctx context.Context, p peer.ID, rec *recpb.Record) error {
-	// add by liangc >>>>
-	mt := pb.Message_PUT_VALUE
-	if isWorldCtx(ctx) {
-		mt = pb.Message_WORLD_PUT_VALUE
-	}
-	// add by liangc <<<<
-	pmes := pb.NewMessage(mt, rec.Key, 0)
+	pmes := pb.NewMessage(pb.Message_PUT_VALUE, rec.Key, 0)
 	pmes.Record = rec
 	rpmes, err := dht.sendRequest(ctx, p, pmes)
 	if err != nil {
@@ -486,9 +401,8 @@ var errInvalidRecord = errors.New("received invalid record")
 // key. It returns either the value or a list of closer peers.
 // NOTE: It will update the dht's peerstore with any new addresses
 // it finds for the given peer.
-// add by liangc : append world arg
-func (dht *IpfsDHT) getValueOrPeers(ctx context.Context, p peer.ID, key string, world bool) (*recpb.Record, []*peer.AddrInfo, error) {
-	pmes, err := dht.getValueSingle(ctx, p, key, world) // add by liangc
+func (dht *IpfsDHT) getValueOrPeers(ctx context.Context, p peer.ID, key string) (*recpb.Record, []*peer.AddrInfo, error) {
+	pmes, err := dht.getValueSingle(ctx, p, key)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -519,12 +433,8 @@ func (dht *IpfsDHT) getValueOrPeers(ctx context.Context, p peer.ID, key string, 
 }
 
 // getValueSingle simply performs the get value RPC with the given parameters
-func (dht *IpfsDHT) getValueSingle(ctx context.Context, p peer.ID, key string, world bool) (*pb.Message, error) {
+func (dht *IpfsDHT) getValueSingle(ctx context.Context, p peer.ID, key string) (*pb.Message, error) {
 	pmes := pb.NewMessage(pb.Message_GET_VALUE, []byte(key), 0)
-	// add by liangc
-	if world {
-		pmes = pb.NewMessage(pb.Message_WORLD_GET_VALUE, []byte(key), 0)
-	}
 	return dht.sendRequest(ctx, p, pmes)
 }
 
@@ -558,7 +468,6 @@ func (dht *IpfsDHT) putLocal(key string, rec *recpb.Record) error {
 	return dht.datastore.Put(mkDsKey(key), data)
 }
 
-// add by liangc : for ddht
 // peerFound signals the routingTable that we've found a peer that
 // might support the DHT protocol.
 // If we have a connection a peer but no exchange of a query RPC ->
@@ -573,51 +482,6 @@ func (dht *IpfsDHT) putLocal(key string, rec *recpb.Record) error {
 // If we connect to a peer we already have in the RT but do not exchange a query (rare)
 //    Do Nothing.
 func (dht *IpfsDHT) peerFound(ctx context.Context, p peer.ID, queryPeer bool) {
-	gid, err := dht.host.Peerstore().Get(p, "Groupid")
-	mygid, _ := dht.host.Peerstore().Get(dht.host.ID(), "Groupid")
-	if c := baseLogger.Check(zap.DebugLevel, "peer found"); c != nil {
-		c.Write(zap.String("peer", p.String()))
-	}
-	b, err := dht.validRTPeer(p)
-
-	addpeer := func(rt *kb.RoutingTable, world bool, wg *sync.WaitGroup) {
-		defer wg.Done()
-		if err != nil {
-			logger.Errorw("failed to validate if peer is a DHT peer", "peer", p, "error", err)
-		} else if b {
-			// 不是一个世界的
-			if !world && gid != mygid {
-				return
-			}
-			newlyAdded, err := rt.TryAddPeer(p, queryPeer)
-			log.Debugf("Add_RoutingTable ==> err=%v, newlyAdded=%v , (myid=%s, mygid=%s) , (id=%s, gid=%s) ", err, newlyAdded, dht.host.ID().Pretty(), mygid, p.Pretty(), gid)
-			if err != nil {
-				// peer not added.
-				return
-			}
-			// If we freshly added the peer because of a query, we need to ensure we override the "zero" lastUsefulAt
-			// value that must have been set in the Routing Table for this peer when it was first added during a connection.
-			if newlyAdded && queryPeer {
-				rt.UpdateLastUsefulAt(p, time.Now())
-			} else if queryPeer {
-				// the peer is already in our RT, but we just successfully queried it and so let's give it a
-				// bump on the query time so we don't ping it too soon for a liveliness check.
-				rt.UpdateLastSuccessfulOutboundQueryAt(p, time.Now())
-			}
-		}
-	}
-
-	wg := new(sync.WaitGroup)
-	wg.Add(2)
-	go addpeer(dht.routingTable, false, wg)
-	go addpeer(dht.worldRoutingTable, true, wg)
-	wg.Wait()
-}
-
-/*
-func (dht *IpfsDHT) peerFound(ctx context.Context, p peer.ID, queryPeer bool) {
-	gid, err := dht.host.Peerstore().Get(p, "Groupid")
-	mygid, _ := dht.host.Peerstore().Get(dht.host.ID(), "Groupid")
 	if c := baseLogger.Check(zap.DebugLevel, "peer found"); c != nil {
 		c.Write(zap.String("peer", p.String()))
 	}
@@ -626,7 +490,6 @@ func (dht *IpfsDHT) peerFound(ctx context.Context, p peer.ID, queryPeer bool) {
 		logger.Errorw("failed to validate if peer is a DHT peer", "peer", p, "error", err)
 	} else if b {
 		newlyAdded, err := dht.routingTable.TryAddPeer(p, queryPeer)
-		fmt.Println("Add_RoutingTable ==>", err, dht.host.ID().Pretty(), mygid, "->", p.Pretty(), gid, " ; err=", newlyAdded, err)
 		if err != nil {
 			// peer not added.
 			return
@@ -643,7 +506,6 @@ func (dht *IpfsDHT) peerFound(ctx context.Context, p peer.ID, queryPeer bool) {
 		}
 	}
 }
-*/
 
 // peerStoppedDHT signals the routing table that a peer is unable to responsd to DHT queries anymore.
 func (dht *IpfsDHT) peerStoppedDHT(ctx context.Context, p peer.ID) {
@@ -651,8 +513,7 @@ func (dht *IpfsDHT) peerStoppedDHT(ctx context.Context, p peer.ID) {
 	// A peer that does not support the DHT protocol is dead for us.
 	// There's no point in talking to anymore till it starts supporting the DHT protocol again.
 	dht.routingTable.RemovePeer(p)
-	// add by liangc
-	dht.worldRoutingTable.RemovePeer(p)
+
 	// since we lost a peer from the RT, we should do this here
 	dht.fixRTIfNeeded()
 }
@@ -674,41 +535,21 @@ func (dht *IpfsDHT) FindLocal(id peer.ID) peer.AddrInfo {
 	}
 }
 
-// add by liangc
-// findPeerSingle asks peer 'p' if they know where the peer with id 'id' is
-func (dht *IpfsDHT) findPeerSingle(ctx context.Context, p peer.ID, id peer.ID, world bool) (*pb.Message, error) {
-	pmes := pb.NewMessage(pb.Message_FIND_NODE, []byte(id), 0)
-	if world {
-		pmes = pb.NewMessage(pb.Message_WORLD_FIND_NODE, []byte(id), 0)
-	}
-	return dht.sendRequest(ctx, p, pmes)
-}
-
-/*
 // findPeerSingle asks peer 'p' if they know where the peer with id 'id' is
 func (dht *IpfsDHT) findPeerSingle(ctx context.Context, p peer.ID, id peer.ID) (*pb.Message, error) {
 	pmes := pb.NewMessage(pb.Message_FIND_NODE, []byte(id), 0)
 	return dht.sendRequest(ctx, p, pmes)
 }
-*/
 
-// add by liangc : append world arg
-func (dht *IpfsDHT) findProvidersSingle(ctx context.Context, p peer.ID, key multihash.Multihash, world bool) (*pb.Message, error) {
+func (dht *IpfsDHT) findProvidersSingle(ctx context.Context, p peer.ID, key multihash.Multihash) (*pb.Message, error) {
 	pmes := pb.NewMessage(pb.Message_GET_PROVIDERS, key, 0)
-	// add by liangc
-	if world {
-		pmes = pb.NewMessage(pb.Message_WORLD_GET_PROVIDERS, key, 0)
-	}
 	return dht.sendRequest(ctx, p, pmes)
 }
 
 // nearestPeersToQuery returns the routing tables closest peers.
 func (dht *IpfsDHT) nearestPeersToQuery(pmes *pb.Message, count int) []peer.ID {
-	// add by liangc
-	if isWorldMes(pmes) {
-		return dht.worldRoutingTable.NearestPeers(kb.ConvertKey(string(pmes.GetKey())), count)
-	}
-	return dht.routingTable.NearestPeers(kb.ConvertKey(string(pmes.GetKey())), count)
+	closer := dht.routingTable.NearestPeers(kb.ConvertKey(string(pmes.GetKey())), count)
+	return closer
 }
 
 // betterPeersToQuery returns nearestPeersToQuery with some additional filtering
@@ -819,12 +660,6 @@ func (dht *IpfsDHT) RoutingTable() *kb.RoutingTable {
 	return dht.routingTable
 }
 
-// add by liangc
-// RoutingTable returns the DHT's routingTable.
-func (dht *IpfsDHT) WorldRoutingTable() *kb.RoutingTable {
-	return dht.worldRoutingTable
-}
-
 // Close calls Process Close.
 func (dht *IpfsDHT) Close() error {
 	return dht.proc.Close()
@@ -885,39 +720,3 @@ func (dht *IpfsDHT) maybeAddAddrs(p peer.ID, addrs []ma.Multiaddr, ttl time.Dura
 	}
 	dht.peerstore.AddAddrs(p, addrs, ttl)
 }
-
-// add by liangc : isWorld <<<<
-func isWorldMes(pmes *pb.Message) bool {
-	/*
-		Message_WORLD_PUT_VALUE     Message_MessageType = 6
-		Message_WORLD_GET_VALUE     Message_MessageType = 7
-		Message_WORLD_ADD_PROVIDER  Message_MessageType = 8
-		Message_WORLD_GET_PROVIDERS Message_MessageType = 9
-		Message_WORLD_FIND_NODE     Message_MessageType = 10
-	*/
-	switch pmes.Type {
-	case pb.Message_WORLD_PUT_VALUE,
-		pb.Message_WORLD_GET_VALUE,
-		pb.Message_WORLD_ADD_PROVIDER,
-		pb.Message_WORLD_GET_PROVIDERS,
-		pb.Message_WORLD_FIND_NODE:
-		return true
-	}
-	return false
-}
-
-func isWorldCtx(ctx context.Context) bool {
-	if ctx.Value("world") != nil {
-		return true
-	}
-	return false
-}
-
-func isWorldOption(cfg routing.Options) bool {
-	if cfg.Other != nil && cfg.Other["world"] != nil {
-		return true
-	}
-	return false
-}
-
-// add by liangc : isWorld <<<<

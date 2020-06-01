@@ -35,5 +35,4 @@ require (
 	github.com/whyrusleeping/go-keyspace v0.0.0-20160322163242-5b898ac5add1
 	go.opencensus.io v0.22.3
 	go.uber.org/zap v1.14.1
-	gopkg.in/src-d/go-log.v1 v1.0.1
 )

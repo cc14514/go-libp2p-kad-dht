@@ -78,10 +78,9 @@ type lookupWithFollowupResult struct {
 //
 // After the lookup is complete the query function is run (unless stopped) against all of the top K peers from the
 // lookup that have not already been successfully queried.
-// add by liangc : append world arg
-func (dht *IpfsDHT) runLookupWithFollowup(ctx context.Context, target string, queryFn queryFn, stopFn stopFn, world bool) (*lookupWithFollowupResult, error) {
+func (dht *IpfsDHT) runLookupWithFollowup(ctx context.Context, target string, queryFn queryFn, stopFn stopFn) (*lookupWithFollowupResult, error) {
 	// run the query
-	lookupRes, err := dht.runQuery(ctx, target, queryFn, stopFn, world)
+	lookupRes, err := dht.runQuery(ctx, target, queryFn, stopFn)
 	if err != nil {
 		return nil, err
 	}
@@ -139,18 +138,10 @@ processFollowUp:
 	return lookupRes, nil
 }
 
-// add by liangc : append world args
-func (dht *IpfsDHT) runQuery(ctx context.Context, target string, queryFn queryFn, stopFn stopFn, world bool) (*lookupWithFollowupResult, error) {
+func (dht *IpfsDHT) runQuery(ctx context.Context, target string, queryFn queryFn, stopFn stopFn) (*lookupWithFollowupResult, error) {
 	// pick the K closest peers to the key in our Routing table.
 	targetKadID := kb.ConvertKey(target)
-	var seedPeers []peer.ID
-	// add by liangc >>>>
-	if world {
-		seedPeers = dht.worldRoutingTable.NearestPeers(targetKadID, dht.bucketSize)
-	} else {
-		seedPeers = dht.routingTable.NearestPeers(targetKadID, dht.bucketSize)
-	}
-	// add by liangc <<<<
+	seedPeers := dht.routingTable.NearestPeers(targetKadID, dht.bucketSize)
 	if len(seedPeers) == 0 {
 		routing.PublishQueryEvent(ctx, &routing.QueryEvent{
 			Type:  routing.QueryError,
@@ -176,24 +167,18 @@ func (dht *IpfsDHT) runQuery(ctx context.Context, target string, queryFn queryFn
 	q.run()
 
 	if ctx.Err() == nil {
-		q.recordValuablePeers(world)
+		q.recordValuablePeers()
 	}
 
 	res := q.constructLookupResult(targetKadID)
 	return res, nil
 }
 
-// add by liangc : append world arg
-func (q *query) recordPeerIsValuable(p peer.ID, world bool) {
-	if world {
-		q.dht.worldRoutingTable.UpdateLastUsefulAt(p, time.Now())
-	} else {
-		q.dht.routingTable.UpdateLastUsefulAt(p, time.Now())
-	}
+func (q *query) recordPeerIsValuable(p peer.ID) {
+	q.dht.routingTable.UpdateLastUsefulAt(p, time.Now())
 }
 
-// add by liangc : append world arg
-func (q *query) recordValuablePeers(world bool) {
+func (q *query) recordValuablePeers() {
 	// Valuable peers algorithm:
 	// Label the seed peer that responded to a query in the shortest amount of time as the "most valuable peer" (MVP)
 	// Each seed peer that responded to a query within some range (i.e. 2x) of the MVP's time is a valuable peer
@@ -207,7 +192,7 @@ func (q *query) recordValuablePeers(world bool) {
 
 	for _, p := range q.seedPeers {
 		if queryTime, ok := q.peerTimes[p]; ok && queryTime < mvpDuration*2 {
-			q.recordPeerIsValuable(p, world)
+			q.recordPeerIsValuable(p)
 		}
 	}
 }
